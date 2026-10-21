@@ -1,0 +1,24 @@
+#!/bin/sh
+# S99custom-ssh — dropbear persistence hook for a rooted Yandex Station Mini 2.
+# Runs at boot from /etc/init.d/ (rootfs is ubifs, remount rw to install).
+# Binaries and host key live on the writable /bkupgrade partition so they
+# survive rootfs reflash attempts; the hook itself survives reboots.
+#
+# Deploy once from the adb root shell:
+#   mount -o remount,rw /
+#   cp S99custom-ssh /etc/init.d/S99custom-ssh && chmod 755 /etc/init.d/S99custom-ssh
+#   mount -o remount,ro /
+P=/bkupgrade/persist
+case "$1" in
+  start)
+    [ -x $P/sbin/dropbear ] || exit 0
+    # network adbd (root, port 5555) — same as the poisoned sync config enables
+    /usr/bin/adbd >/dev/null 2>&1 &
+    sleep 1
+    LD_LIBRARY_PATH=$P/lib $P/sbin/dropbear -p 22 -r $P/etc/dropbear_ecdsa_host_key -s -g >/dev/null 2>&1 &
+    ;;
+  stop)
+    killall dropbear 2>/dev/null
+    ;;
+esac
+exit 0
