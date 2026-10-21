@@ -9,9 +9,7 @@ personally owned Yandex Station Mini 2, demonstrating that a compromised
 third-party CA key is not just a browser problem: any appliance that validates
 its cloud config against the *system* trust store inherits the compromise.
 
-**Status:** reproduction complete, root shell obtained, report submitted to
-Yandex Security (security@yandex-team.ru) on 2026-10-21. 90-day coordinated
-disclosure window.
+**Status:** reproduction complete, root shell obtained.
 
 ## TL;DR
 
