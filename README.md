@@ -44,9 +44,11 @@ ARP + DNS hijack → forged TLS for quasar.yandex.net → poisoned get_sync_info
    The device even ships `/bin/su`.
 
 Affected: Yandex Station Mini 2, firmware 0.369.1.46 (`yandexmini_2`,
-Unisoc SoC, glibc 2.30 armhf userland on aarch64 kernel). The root cause —
-trusting a publicly compromised CA without pinning — plausibly affects the
-whole Quasar-family fleet.
+Unisoc SoC, glibc 2.30 armhf userland on aarch64 kernel). **Also reproduced
+end-to-end on a Yandex Station Lite** — firmware 0.369.1.48 (`yandexmicro`,
+Realtek SoC, aarch64 kernel) — see [the Lite variant section](#station-lite-variant)
+for what changes. The root cause — trusting a publicly compromised CA without
+pinning — plausibly affects the whole Quasar-family fleet.
 
 ## Findings beyond the known chain
 
@@ -73,13 +75,45 @@ operational details were learned by hand and are worth recording:
   ships both loaders, so Debian armhf binaries run as-is (just bundle
   `libtomcrypt`/`libtommath`/`libgmp`/`libz`/`libxcrypt`).
 
+## Station Lite variant
+
+The same chain reproduces on the Station Lite (`yandexmicro`, Realtek SoC,
+firmware 0.369.1.48) with three deltas — the poisoned `get_sync_info`
+payload, the root `adbd` on `:5555`, and the `/bkupgrade`+`S99` persistence
+all work unchanged:
+
+- **The Lite talks to more backends and prefers IPv6.** Besides
+  `quasar.yandex.net` it resolves `uniproxy.alice.yandex.net` (same
+  frontend pool) and a long tail of `*.yandex.net` telemetry hosts, and it
+  asks **AAAA first** — the router hands out a real global AAAA, and a
+  v6 sync bypasses ARP poisoning entirely. Answer *every* `*.yandex.net`
+  lookup: A records → your IP, **AAAA → empty answer** (device falls back
+  to A). That is what `poc/dns-spoof-lite.py` does.
+- **Its DNS timeout is ~1 s.** Forwarded replies from the real resolvers
+  race yours and often arrive after the device already gave up (the device
+  then emits ICMP port-unreachable for its own query ports). Dropping all
+  UDP/53 replies to the device with pf makes your spoofed answer the only
+  one — see the pf snippet in `mitm-setup.md`.
+- **It probes before it talks.** The Lite TCP-connects to a whole list of
+  frontend IPs (`213.180.193.{76,226,230}`, `213.180.204.80`,
+  `93.158.134.32`) and closes each without payload — connect-only
+  reachability probes. Don't misread them as failed TLS; watch for the
+  actual `/get_sync_info?platform=yandexmicro` request in the backend log.
+- Mint the leaf cert with **multi-SAN coverage** (`quasar.yandex.net`,
+  `uniproxy.alice.yandex.net`, `*.alice.yandex.net`, …) so whichever
+  endpoint it dials validates. The chain and `S99custom-ssh` install are
+  byte-for-byte the Mini 2 procedure.
+
 ## Repo contents
 
 ```
 poc/
   fake-quasar.py        # TLS backend serving the poisoned get_sync_info payload
   dns-spoof.py          # answers the station's DNS queries with your IP
+  dns-spoof-lite.py     # Lite variant: all *.yandex.net A→you, AAAA→empty
+  lite-mitm.py          # Lite variant: scoped ARP MITM + pf NAT + backend
   grab-shell.sh         # polls :5555 and runs the root-shell evidence grab
+  S99custom-ssh         # dropbear persistence hook (both devices)
 mitm-setup.md           # the full operator walk-through (macOS-specific bits)
 vulnerability-report.md # structured report (as submitted to Yandex Security)
 ```

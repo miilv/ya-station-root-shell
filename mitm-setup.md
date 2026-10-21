@@ -108,3 +108,57 @@ armhf binaries (e.g. dropbear) run as-is.
   backend and the config reverts.
 - The whole rig is re-runnable in minutes; the attack needs no exploit
   persistence to repeat.
+
+## 8. Station Lite variant (yandexmicro, Realtek)
+
+Same chain, four differences. Scripts: `poc/lite-mitm.py` (scoped ARP MITM +
+pf NAT + backend launcher) and `poc/dns-spoof-lite.py` (the DNS half).
+Reproduced on firmware 0.369.1.48 (`yandex-station-lite`, aarch64 kernel,
+glibc armhf userland, `/bin/su` present).
+
+1. **Find the device** — the Lite doesn't answer its hostname in DNS, but it
+   does advertise mDNS:
+
+   ```
+   dns-sd -B _yandexio._tcp local
+   # YandexIOReceiver-LY0000…  platform=yandexmicro  → resolve via
+   dns-sd -L "YandexIOReceiver-LY0000…" _yandexio._tcp local
+   ```
+
+2. **Spoof *every* `*.yandex.net` lookup, A→you, AAAA→empty.** The Lite
+   resolves `uniproxy.alice.yandex.net`, `clck.yandex.net`,
+   `report.appmetrica.yandex.net`, `scbh.yandex.net`, … and prefers AAAA —
+   the LAN router hands out a real global AAAA, and an IPv6 sync bypasses
+   ARP poisoning completely. Empty AAAA answers force it back to IPv4, into
+   the MITM path.
+
+3. **Drop the real DNS replies with pf.** The Lite's resolver timeout is
+   ~1 s and forwarded replies often lose the race (the device then emits
+   ICMP *port unreachable* for its own query sockets as the late replies
+   finally arrive). Block everything and let the spoofer be the only source
+   of truth:
+
+   ```
+   nat on en0 from <LITE_IP> to any -> (en0)
+   block drop in on en0 inet proto udp from any port 53 to <LITE_IP>
+   ```
+
+   ⚠️ `pfctl -f` replaces the whole ruleset — load NAT and the block rule
+   from one file. (And don't put `port …` on the NAT target; it's a syntax
+   error on macOS pf and the load fails with only a confusing message.)
+
+4. **Cert SANs.** Mint the leaf with SANs covering everything it may dial:
+   `quasar.yandex.net`, `quasar.yandex.com`, `uniproxy.alice.yandex.net`,
+   `quasar-internal.yandex.net`, `backend.yandex.net`. Signed by the same
+   recovered eMudhra `EM OV TLS CA - G3C` key — one cert serves both
+   devices.
+
+Everything downstream is identical: the boot sync pulls
+`/get_sync_info?platform=yandexmicro&version=…`, accepts the same poisoned
+`system_config.adbd` block, writes `/data/quasar/activate_network_adb`, and
+opens root `adbd` on `:5555`. `adb connect` → `uid=0(root)` on
+`yandex-station-lite`. `/bin/su` ships on this firmware too; `/bkupgrade`
+is an rw ubifs mount and the same `S99custom-ssh` dropbear install applies
+unchanged. Expect some TCP connect-and-close probes to each frontend IP
+before the real sync — that's the device's reachability check, not a
+failure.
