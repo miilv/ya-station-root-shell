@@ -104,6 +104,37 @@ all work unchanged:
   endpoint it dials validates. The chain and `S99custom-ssh` install are
   byte-for-byte the Mini 2 procedure.
 
+## Community reports on other platforms
+
+The root cause — trusting a publicly compromised CA without pinning — is not
+platform-specific, and neither is the fix status. Confirmed third-party
+reproductions, by platform and build:
+
+| Platform | Firmware | Status | Source |
+|---|---|---|---|
+| `yandexmini_2` (Station Mini 2) | 0.369.1.46 | vulnerable, reproduced here | this repo |
+| `yandexmicro` (Station Lite) | 0.369.1.48 | vulnerable, reproduced here | this repo |
+| `yandexmidi` (Station 2, YNDX-00051) | 0.369.1.50 | **vulnerable** — chain works, but see caveats | [derangedabbot/yandex-station-2-airplay](https://github.com/derangedabbot/yandex-station-2-airplay), [issue #3](https://github.com/miilv/ya-station-root-shell/issues/3) |
+
+Notes from the `yandexmidi` report worth reading before trying `.50`:
+
+- **The ADB activation window is short (~30–60 s) and opens only during
+  initial setup** — after a factory reset. If the station gets to finish its
+  first OTA + reboot with the real cloud config, the window never opens. This
+  is likely the main source of "not reproducible" reports on `.50` builds.
+- The activation flags in `/data/quasar` are revoked by the cloud config
+  after the window on this platform (they persist longer on Mini 2/Lite).
+- Its `.50` trust store (`/system/vendor/quasar/certs/ca-certificates.crt`,
+  122 certs) has **no `AAA Certificate Services` root** — yet it still accepts
+  a leaf signed by the leaked intermediate. So "fixed in `.50`" does not hold
+  for `yandexmidi`; check the platform, not just the version number.
+- Router-level DNS records (static A + empty AAAA) work instead of ARP
+  spoofing on that setup.
+
+See also [ciclos5258/yandex-station-security-research](https://github.com/ciclos5258/yandex-station-security-research)
+for a Mini 2 attempt where the vector did not reproduce — consistent with the
+setup-window caveat above.
+
 ## Repo contents
 
 ```
@@ -155,6 +186,8 @@ reproduce.
 - **bitracker** — the original chain concept and config payload shape
   (*iamtsunde.re/blog/yamini2adventures*)
 - **v3rt3p/quasar-server** — endpoint behavior reference
+- **derangedabbot** — independent `yandexmidi`/`.50` reproduction and
+  hardening notes ([repo](https://github.com/derangedabbot/yandex-station-2-airplay))
 - **Fluepke** — CA key recovery tooling (emudrahahahahaha)
 - **Mozilla Bugzilla 2083449** — the CA incident itself
 
